@@ -1,0 +1,13 @@
+{
+  "name": "ai-office",
+  "owner": {
+    "name": "subcer"
+  },
+  "plugins": [
+    {
+      "name": "ai-office",
+      "source": "./"
+    }
+  ],
+  "description": "AI 辦公室：Claude Code 的像素風團隊面板 mod"
+}

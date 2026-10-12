@@ -1,0 +1,9 @@
+{
+  "name": "ai-office",
+  "version": "0.1.0",
+  "description": "像素風辦公室面板：AI 團隊的每個角色坐在自己的座位上，工作狀態用動畫表現",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "subcer"
+  }
+}
