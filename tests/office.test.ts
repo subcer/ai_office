@@ -107,11 +107,10 @@ test('模型設定：替工程師選 Opus 4.8，派工時換成那個模型，�
   })
   const ui = await $.ui.mount(pane('desktop'))
   await click(ui, 'models')
-  await ui.press({ key: 'role-engineer' })
+  await click(ui, 'role:engineer')
   expect(await ui.find({ type: 'Text', text: /工程師要用哪個模型/ })).toBeDefined()
-  await ui.press({ key: 'pick-claude-opus-4-8' })
+  await click(ui, 'pick:engineer:claude-opus-4-8')
   expect(await ui.find({ key: 'models-roles' })).toBeDefined()
-  expect(await ui.find({ type: 'Button', label: /工程師：Opus 4.8/ })).toBeDefined()
 
   // 選好的模型有存起來，下次開 Claude 還在
   expect(store.get('models')).toEqual({ engineer: 'claude-opus-4-8' })
@@ -125,15 +124,49 @@ test('模型設定：替工程師選 Opus 4.8，派工時換成那個模型，�
   await $.agent.spawn({ prompt: '找檔案', subagentType: 'Explore' })
   expect(asked[2]).toBeUndefined()
 
-  await ui.press({ key: 'models-close' })
+  await click(ui, 'models-close')
   const status = String((await svgs(ui)).status?.props.source)
   expect(status).toContain('Opus 4.8')
   expect(status).toContain('Sonnet 5.5') // 審查員沒選，顯示上次實際用的
 
   await click(ui, 'models')
-  await ui.press({ key: 'role-engineer' })
-  await ui.press({ key: 'pick-default' })
+  await click(ui, 'role:engineer')
+  await click(ui, 'pick:engineer:default')
   await $.agent.spawn({ prompt: '再做一張', subagentType: 'game-engineer' })
   expect(asked[3]).toBeUndefined()
+  await ui.unmount()
+})
+
+test('模型設定頁：預設顯示代理人定義檔寫的模型；原生按鈕模式也能選', async ($, on) => {
+  const files: Record<string, string> = {
+    '/proj/.claude/agents/game-engineer.md': `---
+name: game-engineer
+model: sonnet
+---
+工程師`,
+    '/home/.claude/agents/planner.md': `---
+name: planner
+model: claude-opus-4-8
+---
+`,
+    '/home/.claude/agents/reviewer.md': `---
+name: reviewer
+---
+`,
+  }
+  on('session.root', () => ({ value: '/proj' }))
+  on('env.get', ($, e) => ({ value: e.name === 'USERPROFILE' ? '/home' : undefined }))
+  on('fs.exists', ($, e) => ({ value: e.path in files }))
+  on('fs.read', ($, e) => ({ value: files[e.path] }))
+  on('store.set', () => ({ value: undefined }))
+  const ui = await $.ui.mount(pane('desktop'))
+  await $.command.run({ command: 'office-classic', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } })
+  await ui.press({ key: 'models' })
+  expect(await ui.find({ type: 'Button', label: /工程師　預設：Sonnet 5.5/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', label: /企劃　預設：Opus 4.8/ })).toBeDefined()
+  expect(await ui.find({ type: 'Button', label: /審查員　預設：跟主對話相同/ })).toBeDefined()
+  await ui.press({ key: 'role:qa' })
+  await ui.press({ key: 'pick:qa:claude-haiku-5-5' })
+  expect(await ui.find({ type: 'Button', label: /測試員　Haiku 5.5/ })).toBeDefined()
   await ui.unmount()
 })

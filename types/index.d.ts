@@ -70,6 +70,8 @@ declare module 'claude-code' {
       /** 每個角色最近一次派工實際用的模型 */
       runModels: Partial<Record<RoleId, string>>
       modelPage: ModelPage
+      /** 每個角色的代理人定義檔（.claude/agents/<類型>.md）裡寫的模型，就是「預設」 */
+      defaultModels: Partial<Record<RoleId, string>>
     }
   }
 }

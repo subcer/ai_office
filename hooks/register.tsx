@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Board, Layout, ModelPage, Review, RoleId, Seat, Seats, Stat, View } from '../types'
 import { LOOKS, NAMES } from './characters'
-import { MODELS, modelName } from './models'
+import { MODELS, defaultModelFromFile, modelName } from './models'
 import { officeSvg } from './office-svg'
 import { statusSvg, type StatusRow } from './status-svg'
 import { ROLES, whereAt } from './timeline'
@@ -19,6 +19,9 @@ const TYPE_ROLE: Record<string, RoleId> = {
   reviewer: 'reviewer',
   'qa-tester': 'qa',
 }
+
+/** 座位 → 代理人類型，用來找代理人定義檔 */
+const ROLE_TYPE = Object.fromEntries(Object.entries(TYPE_ROLE).map(([type, role]) => [role, type])) as Partial<Record<RoleId, string>>
 
 const LIST_ORDER: readonly RoleId[] = ['producer', 'planner', 'engineer', 'art', 'reviewer', 'qa']
 
@@ -59,6 +62,29 @@ const modelPage = atom({ plugin: 'ai-office', key: 'modelPage' } as const, { isO
 /** 可以換模型的角色（製作人是主對話，只能從 App 的模型選單換） */
 const MODEL_ROLES: readonly RoleId[] = LIST_ORDER.filter(r => r !== 'producer')
 const MODELS_STORE_KEY = 'models'
+const defaultModels = atom({ plugin: 'ai-office', key: 'defaultModels' } as const, {} as Partial<Record<RoleId, string>>)
+
+/**
+ * 讀每個角色的代理人定義檔，找出「預設」用的模型。
+ * 和 Claude Code 一樣：專案的 .claude/agents 優先，沒有才看使用者層級的 ~/.claude/agents。
+ */
+async function readDefaultModels($: EngineInterface) {
+  const root = await $.session.root()
+  const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
+  const found: Partial<Record<RoleId, string>> = {}
+  for (const role of MODEL_ROLES) {
+    const type = ROLE_TYPE[role]
+    if (!type) continue
+    for (const dir of [`${root}/.claude/agents`, ...(home ? [`${home}/.claude/agents`] : [])]) {
+      const file = `${dir}/${type}.md`
+      if (!(await $.fs.exists(file))) continue
+      const text = await $.fs.read(file)
+      found[role] = defaultModelFromFile(typeof text === 'string' ? text : '')
+      break
+    }
+  }
+  await update($, defaultModels, () => found)
+}
 
 /** 選好模型：更新畫面，同時存起來，下次開 Claude 還在；選完回角色列表 */
 async function chooseModel($: EngineInterface, role: RoleId, id: string | undefined) {
@@ -189,8 +215,18 @@ async function runAction($: EngineInterface, action: string) {
     case 'preview':
       return togglePreview($)
     case 'models':
+      if (!(await read($, modelPage)).isOpen) await readDefaultModels($).catch(() => undefined)
       return update($, modelPage, cur => ({ isOpen: !cur.isOpen }))
+    case 'models-close':
+      return update($, modelPage, () => ({ isOpen: false }))
+    case 'models-back':
+      return update($, modelPage, () => ({ isOpen: true }))
   }
+  // 模型設定頁的按鈕：role:<角色> 進挑選頁，pick:<角色>:<模型代號或 default> 選定
+  const [kind, role, id] = action.split(':') as [string, RoleId | undefined, string | undefined]
+  if (!role || !MODEL_ROLES.includes(role)) return
+  if (kind === 'role') return update($, modelPage, () => ({ isOpen: true, role }))
+  if (kind === 'pick' && id) return chooseModel($, role, id === 'default' ? undefined : id)
 }
 
 export const register: Register = (on, options) => {
@@ -463,7 +499,9 @@ export const register: Register = (on, options) => {
         </Box>
       )
 
-    const settings = page.isOpen ? modelSettings($, desktop, page, chosenModels) : undefined
+    const settings = page.isOpen
+      ? modelSettings(desktop, page, chosenModels, await read($, defaultModels), Client && !v.isClassicButtons ? Client : undefined, $)
+      : undefined
 
     return (
       <Box flexDirection="column">
@@ -478,37 +516,62 @@ export const register: Register = (on, options) => {
 
 type Ui = { Box: (...a: any[]) => any; Text: (...a: any[]) => any; Button: (...a: any[]) => any }
 
-/** 第一層列出五個角色目前的模型；點角色進第二層挑模型，挑完自動回第一層 */
-function modelSettings($: EngineInterface, ui: Ui, page: ModelPage, chosen: Partial<Record<RoleId, string>>) {
+/** 跟團隊動態同一套顏色：深藍底、暖黃標題、淡藍字 */
+const PAGE = { bg: '#14152f', title: '#ffd27a', text: '#cfd6ff', dim: '#8a90c8' }
+
+/**
+ * 第一層列出五個角色目前的模型；點角色進第二層挑模型，挑完自動回第一層。
+ * 有 Client（桌面 App）時用像素按鈕，跟控制列同一套；沒有或選了原生按鈕時用 Button。
+ */
+function modelSettings(ui: Ui, page: ModelPage, chosen: Partial<Record<RoleId, string>>, defaults: Partial<Record<RoleId, string>>,
+  Client: ((...a: any[]) => any) | undefined, $: EngineInterface) {
   const { Box, Text, Button } = ui
+  const button = (action: string, label: string, isOn = false) => Client
+    ? <Client key={`chip-${action}`} module="./control-chip.tsx" props={{ label, action, isOn }} />
+    : <Button key={action} label={label} onPress={() => runAction($, action)} />
+  const defaultLabel = (role: RoleId) => `預設：${defaults[role] ?? '（讀不到）'}`
+  const frame = (key: string, children: unknown[]) => (
+    <Box key={key} flexDirection="column" gap={1} paddingX={2} paddingY={1} backgroundColor={PAGE.bg}>
+      {children}
+    </Box>
+  )
+  const note = (key: string, body: string) => <Text key={key} color={PAGE.dim}>{body}</Text>
+  const title = (key: string, body: string) => <Text key={key} color={PAGE.title} bold>{body}</Text>
+
   if (!page.role) {
-    return (
-      <Box key="models-roles" flexDirection="column" gap={1} paddingY={1}>
-        <Text bold>模型設定</Text>
-        <Text dimColor>點角色換模型。之後派的工才會用新模型；製作人（主對話）請用 App 的模型選單。</Text>
-        {MODEL_ROLES.map(role => (
-          <Button key={`role-${role}`} label={`${NAMES[role]}：${modelName(chosen[role]) ?? '預設（照角色設定檔）'}`}
-            onPress={() => update($, modelPage, () => ({ isOpen: true, role }))} />
-        ))}
-        <Button key="models-close" label="← 回辦公室" onPress={() => update($, modelPage, () => ({ isOpen: false }))} />
-      </Box>
-    )
+    return frame('models-roles', [
+      title('t', '◈ 模型設定'),
+      note('n1', '點角色換模型，之後派的工才會用新模型。'),
+      note('n2', '「預設」＝代理人定義檔（.claude/agents/角色.md）裡寫的模型。製作人（主對話）請用 App 下方的模型選單。'),
+      ...MODEL_ROLES.map(role => (
+        <Box key={`row-${role}`} flexDirection="row" gap={1}>
+          {button(`role:${role}`, `${NAMES[role]}　${modelName(chosen[role]) ?? defaultLabel(role)}`, Boolean(chosen[role]))}
+        </Box>
+      )),
+      <Box key="nav" flexDirection="row" gap={1}>{button('models-close', '← 回辦公室')}</Box>,
+    ])
   }
+
   const role = page.role
   const current = chosen[role]
   const option = (id: string | undefined, label: string) => (
-    <Button key={`pick-${id ?? 'default'}`} label={`${current === id ? '✓ ' : '　'}${label}`} onPress={() => chooseModel($, role, id)} />
-  )
-  return (
-    <Box key={`models-${role}`} flexDirection="column" gap={1} paddingY={1}>
-      <Text bold>{NAMES[role]}要用哪個模型？</Text>
-      <Text dimColor>價格是每百萬 token 的輸入／輸出（美元）</Text>
-      {option(undefined, '預設（照角色設定檔）')}
-      <Text bold>最新</Text>
-      {MODELS.filter(m => m.isLatest).map(m => option(m.id, `${m.name}　${m.price}`))}
-      <Text bold>舊版</Text>
-      {MODELS.filter(m => !m.isLatest).map(m => option(m.id, `${m.name}　${m.price}`))}
-      <Button key="models-back" label="← 回角色列表" onPress={() => update($, modelPage, () => ({ isOpen: true }))} />
+    <Box key={`opt-${id ?? 'default'}`} flexDirection="row">
+      {button(`pick:${role}:${id ?? 'default'}`, `${current === id ? '✓ ' : '　'}${label}`, current === id)}
     </Box>
   )
+  const group = (key: string, latest: boolean) => (
+    <Box key={key} flexDirection="row" flexWrap="wrap" gap={1}>
+      {MODELS.filter(m => m.isLatest === latest).map(m => button(`pick:${role}:${m.id}`, `${current === m.id ? '✓ ' : ''}${m.name}　${m.price}`, current === m.id))}
+    </Box>
+  )
+  return frame(`models-${role}`, [
+    title('t', `◈ ${NAMES[role]}要用哪個模型？`),
+    note('n', '價格是每百萬 token 的輸入／輸出（美元）。'),
+    option(undefined, defaultLabel(role)),
+    title('h1', '最新'),
+    group('latest', true),
+    title('h2', '舊版'),
+    group('older', false),
+    <Box key="nav" flexDirection="row" gap={1}>{button('models-back', '← 回角色列表')}</Box>,
+  ])
 }
