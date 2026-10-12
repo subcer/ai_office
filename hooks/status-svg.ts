@@ -139,11 +139,15 @@ function row(r: StatusRow, i: number, now: number): string {
 
 /* ---------- 任務卡總進度 ---------- */
 
-function boardBar(b: Board): string {
+
+
+/** title 沒給＝還沒設定任務卡資料夾，只顯示提示 */
+function boardBar(b: Board, title?: string): string {
   const total = b.todo + b.doing + b.done
   const y = 82
+  if (!title) return text(3, y + 2, 3.2, '#ffd27a', '任務卡', ' font-weight="bold"') + text(157, y + 2, 2.8, '#8a90c8', '未設定（/config 設定任務卡資料夾）', ' text-anchor="end"')
   const parts: string[] = [
-    text(3, y + 2, 3.2, '#ffd27a', 'M2-1 任務卡', ' font-weight="bold"'),
+    text(3, y + 2, 3.2, '#ffd27a', title.slice(0, 24), ' font-weight="bold"'),
     text(157, y + 2, 2.8, '#cfd6ff', `完成 ${b.done} · 進行 ${b.doing} · 待辦 ${b.todo}`, ' text-anchor="end"'),
   ]
   if (total === 0) return parts.join('')
@@ -190,7 +194,7 @@ const STYLE = `<style>
 @media (prefers-reduced-motion:reduce){*{animation:none!important}}
 </style>`
 
-export function statusSvg(rows: readonly StatusRow[], board: Board, now: number): string {
+export function statusSvg(rows: readonly StatusRow[], board: Board, now: number, boardTitle?: string): string {
   const defs =
     `<pattern id="pDot" width="4" height="4" patternUnits="userSpaceOnUse"><rect x="1" y="1" width="1" height="1" fill="#1a1b3c"/></pattern>` +
     `<pattern id="pFade" width="2" height="2" patternUnits="userSpaceOnUse"><rect width="2" height="2" fill="#14152f"/><rect width="1" height="1" fill="#1e1a2b"/><rect x="1" y="1" width="1" height="1" fill="#1e1a2b"/></pattern>` +
@@ -200,7 +204,7 @@ export function statusSvg(rows: readonly StatusRow[], board: Board, now: number)
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 ${W} ${H}" shape-rendering="crispEdges" style="background:#14152f">` +
     `<defs>${defs}</defs>${STYLE}` +
-    backdrop(envAt(now)) + rows.map((r, i) => row(r, i, now)).join('') + boardBar(board) +
+    backdrop(envAt(now)) + rows.map((r, i) => row(r, i, now)).join('') + boardBar(board, boardTitle) +
     `</svg>`
   )
 }

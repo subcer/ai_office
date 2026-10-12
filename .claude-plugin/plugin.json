@@ -5,5 +5,31 @@
   "types": "./types/index.d.ts",
   "author": {
     "name": "subcer"
+  },
+  "userConfig": {
+    "taskDir": {
+      "type": "string",
+      "title": "任務卡資料夾",
+      "description": "專案裡放任務卡的資料夾（相對路徑，例如 docs/tasks）。檔名以 T-數字 開頭，內文有「狀態：完成／待辦／其他」。留空＝不顯示任務卡進度",
+      "default": ""
+    },
+    "boardTitle": {
+      "type": "string",
+      "title": "看板名稱",
+      "description": "顯示在團隊動態下方的看板標題，例如「M2-1 任務卡」",
+      "default": "任務卡"
+    },
+    "cardFrom": {
+      "type": "number",
+      "title": "任務卡起始編號",
+      "description": "只算這個編號以後的卡（0＝不限）",
+      "default": 0
+    },
+    "cardTo": {
+      "type": "number",
+      "title": "任務卡結束編號",
+      "description": "只算這個編號以前的卡（0＝不限）",
+      "default": 0
+    }
   }
 }

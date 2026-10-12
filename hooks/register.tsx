@@ -21,8 +21,14 @@ const TYPE_ROLE: Record<string, RoleId> = {
 
 const LIST_ORDER: readonly RoleId[] = ['producer', 'planner', 'engineer', 'art', 'reviewer', 'qa']
 
-/** M2-1 的任務卡範圍（T-023～T-036，含美術線） */
-const BOARD_CARDS = { from: 23, to: 36 }
+/** 任務卡看板的設定（plugin.json 的 userConfig）。資料夾留空＝不讀任務卡，看板保持空白 */
+type BoardConfig = { dir: string; title: string; from: number; to: number }
+const boardConfig = (options: Readonly<Record<string, unknown>>): BoardConfig => ({
+  dir: typeof options.taskDir === 'string' ? options.taskDir.trim().replace(/^[/\\]+|[/\\]+$/g, '') : '',
+  title: typeof options.boardTitle === 'string' && options.boardTitle.trim() ? options.boardTitle.trim() : '任務卡',
+  from: typeof options.cardFrom === 'number' ? options.cardFrom : 0,
+  to: typeof options.cardTo === 'number' ? options.cardTo : 0,
+})
 
 /** Svg 的 source 上限是 131072 字元，留一點餘裕 */
 const SVG_LIMIT = 130000
@@ -165,7 +171,8 @@ async function runAction($: EngineInterface, action: string) {
   }
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  const cfg = boardConfig(options ?? {})
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'office', description: '打開 AI 辦公室面板' })
     await $.command.register({ name: 'office-classic', description: 'AI 辦公室：像素按鈕與原生按鈕互換（像素按鈕點不動時用）' })
@@ -197,15 +204,16 @@ export const register: Register = on => {
     })
 
     const readBoard = async () => {
+      if (!cfg.dir) return
       const root = await $.session.root()
-      const dir = `${root}/docs/tasks`
+      const dir = `${root}/${cfg.dir}`
       if (!(await $.fs.exists(dir))) return
       const counts: Board = { todo: 0, doing: 0, done: 0 }
       for (const entry of await $.fs.list(dir)) {
         const match = /^T-(\d+)/.exec(entry.name)
         if (!match || entry.kind !== 'file') continue
         const num = Number(match[1])
-        if (num < BOARD_CARDS.from || num > BOARD_CARDS.to) continue
+        if ((cfg.from > 0 && num < cfg.from) || (cfg.to > 0 && num > cfg.to)) continue
         const text = await $.fs.read(`${dir}/${entry.name}`)
         const status = /狀態：(.*)/.exec(typeof text === 'string' ? text : '')?.[1] ?? ''
         if (status.startsWith('完成')) counts.done++
@@ -218,7 +226,7 @@ export const register: Register = on => {
       await update($, board, () => counts)
       if (wasLoaded && counts.done > old.done) {
         await update($, doneAt, () => Date.now())
-        void $.ui.toast(`任務卡完成 +${counts.done - old.done}，M2-1 已完成 ${counts.done} 張`)
+        void $.ui.toast(`任務卡完成 +${counts.done - old.done}，${cfg.title}已完成 ${counts.done} 張`)
         void $.audio.play({ asset: 'sounds/ding.wav' }).catch(() => undefined)
       }
     }
@@ -352,7 +360,7 @@ export const register: Register = on => {
     const officeAlt = `AI 辦公室，${working} 人工作中`
     const statusAlt = '團隊動態：每個人在做什麼、做了多久、用了多少 token'
     // 團隊動態的計時器、閒置動作也是從產生那一刻起算，同樣每次依現在時間重新產生
-    const status = statusSvg(rows, input.board, Date.now())
+    const status = statusSvg(rows, input.board, Date.now(), cfg.dir ? cfg.title : undefined)
     const isSide = v.layout === 'side' || (v.layout === 'auto' && e.props.bodyColumns >= SIDE_BY_SIDE_COLUMNS)
 
     // 圖片模式：兩張圖都不給固定尺寸，只給 5:3 的比例，App 會照面板寬度等比例縮放，無縫接在一起。

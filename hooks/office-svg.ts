@@ -169,7 +169,7 @@ function clock(now: number, still: boolean): string {
   )
 }
 
-/** 軟木板：顯示 M2-1 任務卡真實的待辦／進行／完成數量 */
+/** 軟木板：顯示任務卡真實的待辦／進行／完成數量（沒設定任務卡資料夾就是空的） */
 function corkboard(board: Board): string {
   const list: Px[] = [[47, 5, 40, 23, '#5a3a2a'], [47, 5, 40, 1, '#6b4a35']]
   const notes: Px[] = []

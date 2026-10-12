@@ -76,3 +76,19 @@ test('終端機只顯示文字清單', async $ => {
   expect(await ui.find({ type: 'Text', text: /辦公室動畫只在桌面 App 顯示/ })).toBeDefined()
   await ui.unmount()
 })
+
+test('沒設定任務卡資料夾時看板空白，只顯示提示', async $ => {
+  const ui = await $.ui.mount(pane('desktop'))
+  const status = String((await svgs(ui)).status?.props.source)
+  expect(status).toContain('未設定')
+  expect(status).not.toContain('M2-1')
+  await ui.unmount()
+})
+
+test('設定任務卡資料夾後，看板顯示自己填的名稱（特殊字元會轉義）', { options: { taskDir: 'docs/tasks', boardTitle: 'M2 <卡>', cardFrom: 1, cardTo: 9 } }, async $ => {
+  const ui = await $.ui.mount(pane('desktop'))
+  const status = String((await svgs(ui)).status?.props.source)
+  expect(status).toContain('M2 &lt;卡&gt;')
+  expect(status).not.toContain('未設定')
+  await ui.unmount()
+})
