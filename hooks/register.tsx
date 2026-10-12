@@ -1,8 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Board, Layout, Review, RoleId, Seat, Seats, Stat, View } from '../types'
+import type { Board, Layout, ModelPage, Review, RoleId, Seat, Seats, Stat, View } from '../types'
 import { LOOKS, NAMES } from './characters'
+import { MODELS, modelName } from './models'
 import { officeSvg } from './office-svg'
 import { statusSvg, type StatusRow } from './status-svg'
 import { ROLES, whereAt } from './timeline'
@@ -51,6 +52,25 @@ const asking = atom({ plugin: 'ai-office', key: 'asking' } as const, {} as Parti
 const agentRoles = atom({ plugin: 'ai-office', key: 'agentRoles' } as const, {} as Record<string, RoleId>)
 const isPreview = atom({ plugin: 'ai-office', key: 'isPreview' } as const, false)
 const view = atom({ plugin: 'ai-office', key: 'view' } as const, { isImageMode: true, showTags: true, layout: 'auto', isClassicButtons: false } as View)
+
+const modelsAtom = atom({ plugin: 'ai-office', key: 'models' } as const, {} as Partial<Record<RoleId, string>>)
+const runModels = atom({ plugin: 'ai-office', key: 'runModels' } as const, {} as Partial<Record<RoleId, string>>)
+const modelPage = atom({ plugin: 'ai-office', key: 'modelPage' } as const, { isOpen: false } as ModelPage)
+/** 可以換模型的角色（製作人是主對話，只能從 App 的模型選單換） */
+const MODEL_ROLES: readonly RoleId[] = LIST_ORDER.filter(r => r !== 'producer')
+const MODELS_STORE_KEY = 'models'
+
+/** 選好模型：更新畫面，同時存起來，下次開 Claude 還在；選完回角色列表 */
+async function chooseModel($: EngineInterface, role: RoleId, id: string | undefined) {
+  await update($, modelsAtom, cur => {
+    const next = { ...cur }
+    if (id) next[role] = id
+    else delete next[role]
+    return next
+  })
+  await $.store.set(MODELS_STORE_KEY, await read($, modelsAtom))
+  await update($, modelPage, () => ({ isOpen: true }))
+}
 
 /** 面板寬到這麼多欄時，辦公室與團隊動態改成左右排 */
 const SIDE_BY_SIDE_COLUMNS = 110
@@ -168,6 +188,8 @@ async function runAction($: EngineInterface, action: string) {
       return update($, view, cur => ({ ...cur, isImageMode: !cur.isImageMode }))
     case 'preview':
       return togglePreview($)
+    case 'models':
+      return update($, modelPage, cur => ({ isOpen: !cur.isOpen }))
   }
 }
 
@@ -177,6 +199,11 @@ export const register: Register = (on, options) => {
     await $.command.register({ name: 'office', description: '打開 AI 辦公室面板' })
     await $.command.register({ name: 'office-classic', description: 'AI 辦公室：像素按鈕與原生按鈕互換（像素按鈕點不動時用）' })
     void $.ui.open({ id: PANE, title: 'AI 辦公室' })
+    const saved = await $.store.get(MODELS_STORE_KEY)
+    if (saved && typeof saved === 'object') {
+      const valid = Object.fromEntries(Object.entries(saved).filter(([r, id]) => MODEL_ROLES.includes(r as RoleId) && typeof id === 'string'))
+      await update($, modelsAtom, () => valid as Partial<Record<RoleId, string>>)
+    }
 
     $.clock.every(1500, async () => {
       if (await read($, isPreview)) return
@@ -290,6 +317,15 @@ export const register: Register = (on, options) => {
     return result
   })
 
+  // 派工時換成總經理在辦公室選的模型，並記下實際用了哪個
+  on('agent.spawn', async ($, e, next) => {
+    const role = TYPE_ROLE[e.subagentType]
+    const chosen = role ? (await read($, modelsAtom))[role] : undefined
+    const result = await next(chosen ? { ...e, model: chosen } : e)
+    if (role && result.model && (await read($, runModels))[role] !== result.model) await update($, runModels, m => ({ ...m, [role]: result.model }))
+    return result
+  }).catch(($, e, next) => next(e)) // 出錯時照原本的設定派工，不能讓派工失敗
+
   // 主對話回完話：製作人掛電話。審查員交件：看結論是退回還是通過
   on('turn.complete', async ($, e, next) => {
     if (!e.agentId) {
@@ -348,6 +384,11 @@ export const register: Register = (on, options) => {
     const { Box, Button, Svg } = desktop
     const Client = 'Client' in desktop ? desktop.Client : undefined
     const s = await read($, stats)
+    const chosenModels = await read($, modelsAtom)
+    const usedModels = await read($, runModels)
+    // 名字旁顯示的模型：有選就顯示選的，沒選就顯示上次實際用的
+    const shownModel = (role: RoleId) => modelName(chosenModels[role] ?? usedModels[role])
+    const page = await read($, modelPage)
     const rows: StatusRow[] = LIST_ORDER.map(role => ({
       role,
       isWorking: seats[role].isWorking,
@@ -356,6 +397,7 @@ export const register: Register = (on, options) => {
       tokens: s[role].tokens,
       isAsking: Boolean(input.asking[role]) && seats[role].isWorking,
       ...(s[role].task ? { task: s[role].task } : {}),
+      ...(shownModel(role) ? { model: shownModel(role) } : {}),
     }))
     const officeAlt = `AI 辦公室，${working} 人工作中`
     const statusAlt = '團隊動態：每個人在做什麼、做了多久、用了多少 token'
@@ -401,6 +443,7 @@ export const register: Register = (on, options) => {
       { action: 'layout', label: `▦ 版面：${LAYOUT_NAMES[v.layout]}`, isOn: v.layout !== 'auto' },
       { action: 'mode', label: v.isImageMode ? '▣ 圖片模式' : '▢ 互動模式', isOn: !v.isImageMode },
       { action: 'preview', label: preview ? '■ 結束預覽' : '▶ 預覽：全員上工', isOn: preview },
+      { action: 'models', label: page.isOpen ? '◈ 關閉模型設定' : '◈ 模型', isOn: page.isOpen },
     ]
 
     // 像素按鈕：深藍底的一條控制列，接在團隊動態底下。沒有 Client 的畫面（VS Code）或選了原生按鈕時用 Button。
@@ -420,11 +463,52 @@ export const register: Register = (on, options) => {
         </Box>
       )
 
+    const settings = page.isOpen ? modelSettings($, desktop, page, chosenModels) : undefined
+
     return (
       <Box flexDirection="column">
-        {stage}
+        {settings ?? stage}
         {bar}
       </Box>
     )
   })
+}
+
+/* ---------- 模型設定頁 ---------- */
+
+type Ui = { Box: (...a: any[]) => any; Text: (...a: any[]) => any; Button: (...a: any[]) => any }
+
+/** 第一層列出五個角色目前的模型；點角色進第二層挑模型，挑完自動回第一層 */
+function modelSettings($: EngineInterface, ui: Ui, page: ModelPage, chosen: Partial<Record<RoleId, string>>) {
+  const { Box, Text, Button } = ui
+  if (!page.role) {
+    return (
+      <Box key="models-roles" flexDirection="column" gap={1} paddingY={1}>
+        <Text bold>模型設定</Text>
+        <Text dimColor>點角色換模型。之後派的工才會用新模型；製作人（主對話）請用 App 的模型選單。</Text>
+        {MODEL_ROLES.map(role => (
+          <Button key={`role-${role}`} label={`${NAMES[role]}：${modelName(chosen[role]) ?? '預設（照角色設定檔）'}`}
+            onPress={() => update($, modelPage, () => ({ isOpen: true, role }))} />
+        ))}
+        <Button key="models-close" label="← 回辦公室" onPress={() => update($, modelPage, () => ({ isOpen: false }))} />
+      </Box>
+    )
+  }
+  const role = page.role
+  const current = chosen[role]
+  const option = (id: string | undefined, label: string) => (
+    <Button key={`pick-${id ?? 'default'}`} label={`${current === id ? '✓ ' : '　'}${label}`} onPress={() => chooseModel($, role, id)} />
+  )
+  return (
+    <Box key={`models-${role}`} flexDirection="column" gap={1} paddingY={1}>
+      <Text bold>{NAMES[role]}要用哪個模型？</Text>
+      <Text dimColor>價格是每百萬 token 的輸入／輸出（美元）</Text>
+      {option(undefined, '預設（照角色設定檔）')}
+      <Text bold>最新</Text>
+      {MODELS.filter(m => m.isLatest).map(m => option(m.id, `${m.name}　${m.price}`))}
+      <Text bold>舊版</Text>
+      {MODELS.filter(m => !m.isLatest).map(m => option(m.id, `${m.name}　${m.price}`))}
+      <Button key="models-back" label="← 回角色列表" onPress={() => update($, modelPage, () => ({ isOpen: true }))} />
+    </Box>
+  )
 }

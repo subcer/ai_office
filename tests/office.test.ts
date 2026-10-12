@@ -92,3 +92,48 @@ test('設定任務卡資料夾後，看板顯示自己填的名稱（特殊字�
   expect(status).not.toContain('未設定')
   await ui.unmount()
 })
+
+test('模型設定：替工程師選 Opus 4.8，派工時換成那個模型，名字旁顯示出來；改回預設就照設定檔', async ($, on) => {
+  const asked: (string | undefined)[] = []
+  const store = new Map<string, unknown>()
+  on('store.get', ($, e) => ({ value: store.get(e.key) }))
+  on('store.set', ($, e) => {
+    store.set(e.key, e.value)
+    return { value: undefined }
+  })
+  on('agent.spawn', ($, e) => {
+    asked.push(e.model)
+    return { model: e.model ?? 'claude-sonnet-5-5', agentId: `a${asked.length}` }
+  })
+  const ui = await $.ui.mount(pane('desktop'))
+  await click(ui, 'models')
+  await ui.press({ key: 'role-engineer' })
+  expect(await ui.find({ type: 'Text', text: /工程師要用哪個模型/ })).toBeDefined()
+  await ui.press({ key: 'pick-claude-opus-4-8' })
+  expect(await ui.find({ key: 'models-roles' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', label: /工程師：Opus 4.8/ })).toBeDefined()
+
+  // 選好的模型有存起來，下次開 Claude 還在
+  expect(store.get('models')).toEqual({ engineer: 'claude-opus-4-8' })
+
+  await $.agent.spawn({ prompt: '做 T-038', subagentType: 'game-engineer' })
+  expect(asked[0]).toBe('claude-opus-4-8')
+  // 沒選的角色照原本的設定，不動 model
+  await $.agent.spawn({ prompt: '審查', subagentType: 'reviewer' })
+  expect(asked[1]).toBeUndefined()
+  // 別的代理人類型（不是辦公室的角色）也不動
+  await $.agent.spawn({ prompt: '找檔案', subagentType: 'Explore' })
+  expect(asked[2]).toBeUndefined()
+
+  await ui.press({ key: 'models-close' })
+  const status = String((await svgs(ui)).status?.props.source)
+  expect(status).toContain('Opus 4.8')
+  expect(status).toContain('Sonnet 5.5') // 審查員沒選，顯示上次實際用的
+
+  await click(ui, 'models')
+  await ui.press({ key: 'role-engineer' })
+  await ui.press({ key: 'pick-default' })
+  await $.agent.spawn({ prompt: '再做一張', subagentType: 'game-engineer' })
+  expect(asked[3]).toBeUndefined()
+  await ui.unmount()
+})

@@ -22,6 +22,8 @@ export type StatusRow = {
   /** 正在等總經理批准 */
   isAsking?: boolean
   task?: string
+  /** 這個角色用的模型（短名字），顯示在名字旁 */
+  model?: string
 }
 
 /* ---------- 像素數字 3×5 ---------- */
@@ -119,6 +121,7 @@ function row(r: StatusRow, i: number, now: number): string {
   parts.push(`<use href="#${id}H" x="${COL.avatar + 1.5}" y="${y + 2}"/>`)
   // 名字
   parts.push(text(COL.text, top, 3.4, look.shirt, NAMES[r.role], ' font-weight="bold"'))
+  if (r.model) parts.push(text(COL.text + NAMES[r.role].length * 3.6 + 3.5, top, 2.4, '#8a90c8', clip(r.model, 12)))
   const elapsed = (now - r.since) / 1000
   if (r.isWorking) {
     const label = r.isAsking ? '✋ 等你批准' : r.role === 'producer' ? '通話中' : '工作中'

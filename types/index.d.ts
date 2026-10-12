@@ -40,6 +40,9 @@ export type View = {
 
 export type Layout = 'auto' | 'stack' | 'side'
 
+/** 模型設定頁：isOpen 時面板改顯示設定頁；role 有值時列出那個角色可選的模型 */
+export type ModelPage = { isOpen: boolean; role?: RoleId }
+
 declare module 'claude-code' {
   interface PluginState {
     'ai-office': {
@@ -62,6 +65,11 @@ declare module 'claude-code' {
       minute: number
       /** 面板顯示設定 */
       view: View
+      /** 總經理替每個角色選的模型（沒有＝照角色設定檔）；同時存在 $.store，重開也記得 */
+      models: Partial<Record<RoleId, string>>
+      /** 每個角色最近一次派工實際用的模型 */
+      runModels: Partial<Record<RoleId, string>>
+      modelPage: ModelPage
     }
   }
 }
